@@ -14,6 +14,28 @@ sig
   (* Lookup and Update raise subscript if index is out of bounds*)
   val lookup : int * 'a RList -> 'a
   val update : int * 'a * 'a RList -> 'a RList
+  val fromList : 'a list -> 'a RList
+end
+
+signature DropRANDOMACCESSLIST =
+sig
+
+  type 'a RList
+
+  val empty : 'a RList
+  val isEmpty : 'a RList -> bool
+
+  val cons : 'a * 'a RList -> 'a RList
+  (* head and tail raise Empty if list is empty*)
+  val head : 'a RList -> 'a
+  val tail : 'a RList -> 'a RList
+
+  (* Lookup and Update raise subscript if index is out of bounds*)
+  val lookup : int * 'a RList -> 'a
+  val update : int * 'a * 'a RList -> 'a RList
+  val fromList : 'a list -> 'a RList
+  val drop : int * 'a RList -> 'a RList
+  val create : int * 'a -> 'a RList
 end
 
 structure DenseBinary =
@@ -68,7 +90,7 @@ struct
 
 end
 
-structure BinaryRAL : RANDOMACCESSLIST =
+structure BinaryRAL : DropRANDOMACCESSLIST =
 struct
 
   exception EMPTY
@@ -85,9 +107,11 @@ struct
   fun size (LEAF x) = 1
     | size (NODE (w, t1, t2)) = w
   fun link (t1,t2) = NODE (size t1 + size t2, t1, t2)
+
   fun consTree (t, []) = [ONE t]
     | consTree (t, ZERO :: ts) = ONE t:: ts
     | consTree (t1, ONE t2 :: ts) = ZERO :: consTree (link (t1, t2), ts)
+
   fun unconsTree [] = raise EMPTY
     | unconsTree [ONE t] = (t, [])
     | unconsTree (ONE t:: ts) = (t, ZERO :: ts)
@@ -120,36 +144,27 @@ struct
     | update (i, y, ONE t :: ts) = if i < size t then ONE(updateTree (i,y,t)) :: ts
                                                 else ONE t :: update(i - size t, y, ts)
 
-end
+  fun fromList (xs:'a list) : 'a RList =
+    foldr cons empty xs
 
-(*Implemet a sparse version of binary RAL*)
+  fun drop' (0, t) = [ONE t]
+    | drop' (1, LEAF x) = []
+    | drop' (i, LEAF x) = raise SUBSCRIPT
+    | drop' (i, NODE (w, t1, t2)) = if i <= w div 2 then ONE t2 :: drop'(i,t1)
+                                                    else drop'(i-size t1, t2)
 
-structure Susp360 :> SUSP =
-struct
+  fun drop (i, []) = raise SUBSCRIPT
+    | drop (i, ZERO :: ts) = drop(i,ts)
+    | drop (i, ONE t :: ts) = if i = size t then ts
+                         else if i > size t then drop(i-size t, ts)
+                                            else drop'(i,t)
 
-  (*  Remember:  if e : int, then Thunk(fn () => e) : int th_or_res
-  *                               Result(9) : int th_or_res
-  *)
-  datatype 'a th_or_res = Thunk of unit -> 'a
-                        | Result of 'a
-
-  type 'a susp = 'a th_or_res ref
-
-  fun $(e : unit -> 'a) : 'a susp =
-    ref(Thunk e)
-
-  val delay : (unit -> 'a) -> 'a susp = $
-
-  fun force (s : 'a susp) : 'a =
-    case !s of
-         Thunk e =>
-         let
-           val v = e()
-           val () = s := Result v
-         in
-           v
-         end
-       | Result v => v
+  fun create(i : int, a : 'a) =
+    let
+      val init = List.tabulate (i,(fn (z) => a))
+    in
+      fromList init
+    end
 
 end
 
@@ -203,62 +218,10 @@ struct
                                                           else if i - size t1 < size t2 then TWO(t1,updateTree(i - size t1,y,t2)) :: ts
                                                                                         else TWO (t1,t2) :: update (i - size t1 - size t2, y, ts)
 
+  fun fromList(xs:'a list) : 'a RList =
+    foldr cons empty xs
+
 end
-
-(* functor ZerolessRedundantLazyBinaryRAL (S : SUSP) : RANDOMACCESSLIST =
-struct
-
-  exception EMPTY
-  exception SUBSCRIPT
-
-  datatype 'a streamcell = Nil | Cons of 'a * 'a stream
-  withtype 'a stream = 'a streamcell S.susp
-
-  datatype 'a Tree = LEAF of 'a | NODE of int * 'a Tree * 'a Tree
-  datatype 'a Digit = ONE of 'a Tree | TWO of 'a Tree * 'a Tree | THREE of 'a Tree * 'a Tree * 'a Tree
-  type 'a RList = 'a Digit stream
-
-  val empty = Nil
-  fun isEmpty ts = null ts
-
-  fun size (LEAF x) = 1
-    | size (NODE (w, t1, t2)) = w
-  fun link (t1,t2) = NODE (size t1 + size t2, t1, t2)
-  fun consTree (t, []) = [ONE t]
-    | consTree (t, ONE t2 :: ts) = TWO (t,t2) :: ts
-    | consTree (t1, TWO (t2,t3) :: ts) = ONE t1 :: consTree (link (t2, t3), ts)
-  fun unconsTree [] = raise EMPTY
-    | unconsTree [ONE t] = (t, [])
-    | unconsTree (TWO (t1,t2):: ts) = (t1, ONE t2 :: ts)
-    | unconsTree (ONE t :: ts) = (t, ts)
-
-  fun cons (x, ts) = consTree (LEAF x, ts)
-  fun head (ONE(LEAF x) :: _) = x
-    | head (TWO(LEAF x, LEAF y) :: _) = x
-    | head ([]) = raise EMPTY
-  fun tail ts = let val (_, ts') = unconsTree ts in ts' end
-
-  fun lookupTree (0, LEAF x) = x
-    | lookupTree (i, LEAF x) = raise SUBSCRIPT
-    | lookupTree (i, NODE (w, t1, t2)) = if i < w div 2 then lookupTree (i, t1)
-                                                        else lookupTree (i - w div 2, t2)
-  fun updateTree (0, y, LEAF x) = LEAF y
-    | updateTree (i, y, LEAF x) = raise SUBSCRIPT
-    | updateTree (i, y, NODE (w, t1, t2)) = if i < w div 2 then NODE (w, updateTree (i, y, t1), t2)
-                                                           else NODE (w, t1, updateTree (i - w div 2, y, t2))
-
-  fun lookup (i, []) = raise SUBSCRIPT
-    | lookup (i, ONE t :: ts) = if i < size t then lookupTree (i, t) else lookup (i - size t, ts)
-    | lookup (i, (TWO (t1,t2)) :: ts) = if i < size t1 then lookupTree (i ,t1) else lookup (i - size t1, ONE t2 :: ts)
-
-  fun update (i, y, []) = raise SUBSCRIPT
-    | update (i, y, ONE t :: ts) = if i < size t then ONE(updateTree (i,y,t)) :: ts
-                                                else ONE t :: update(i - size t, y, ts)
-    | update (i, y, (TWO (t1,t2)) :: ts) = if i < size t1 then TWO(updateTree(i,y,t1),t2) :: ts
-                                                          else if i - size t1 < size t2 then TWO(t1,updateTree(i - size t1,y,t2)) :: ts
-                                                                                        else TWO (t1,t2) :: update (i - size t1 - size t2, y, ts)
-
-end *)
 
 structure ZerolessRedundantBinaryRAL : RANDOMACCESSLIST =
 struct
@@ -279,7 +242,7 @@ struct
   fun consTree (t, []) = [ONE t]
     | consTree (t, ONE t2 :: ts) = TWO (t,t2) :: ts
     | consTree (t, TWO (t2,t3) :: ts) = THREE(t,t2,t3) :: ts
-    | consTree (t, THREE(t2,t3,t4) :: ts) = ONE(t) :: consTree(link(t2,link(t3,t4)),ts)
+    | consTree (t, THREE(t2,t3,t4) :: ts) = TWO(t,t2) :: consTree(link(t3,t4),ts)
   fun unconsTree [] = raise EMPTY
     | unconsTree [ONE t] = (t, [])
     | unconsTree (THREE (t1,t2,t3) :: ts) = (t1, TWO(t2,t3) :: ts)
@@ -305,17 +268,78 @@ struct
   fun lookup (i, []) = raise SUBSCRIPT
     | lookup (i, ONE t :: ts) = if i < size t then lookupTree (i, t) else lookup (i - size t, ts)
     | lookup (i, (TWO (t1,t2)) :: ts) = if i < size t1 then lookupTree (i ,t1) else lookup (i - size t1, ONE t2 :: ts)
+    | lookup (i, (THREE(t1,t2,t3)) :: ts) = if i < size t1 then lookupTree (i, t1) else lookup (i - size t1, TWO(t2,t3) :: ts)
 
   fun update (i, y, []) = raise SUBSCRIPT
     | update (i, y, ONE t :: ts) = if i < size t then ONE(updateTree (i,y,t)) :: ts
-                                                else ONE t :: update(i - size t, y, ts)
+                                                 else ONE t :: update(i - size t, y, ts)
     | update (i, y, (TWO (t1,t2)) :: ts) = if i < size t1 then TWO(updateTree(i,y,t1),t2) :: ts
-                                                          else if i - size t1 < size t2 then TWO(t1,updateTree(i - size t1,y,t2)) :: ts
-                                                                                        else TWO (t1,t2) :: update (i - size t1 - size t2, y, ts)
+                                      else if i - size t1 < size t2 then TWO(t1,updateTree(i - size t1,y,t2)) :: ts
+                                                                    else TWO (t1,t2) :: update (i - size t1 - size t2, y, ts)
+    | update (i, y, (THREE (t1,t2,t3)) :: ts) = if i < size t1 then THREE(updateTree(i,y,t1),t2,t3) :: ts
+                                           else if i - size t1 < size t2 then THREE(t1,updateTree(i - size t1,y,t2),t3) :: ts
+                                           else if i - size t1 - size t2 < size t3 then THREE(t1,t2,updateTree(i,y,t3)) :: ts
+                                                                                   else THREE(t1,t2,t3) :: update (i - size t1 - size t2 - size t3, y, ts)
+
+  fun fromList(xs:'a list) : 'a RList =
+    foldr cons empty xs
+
 
 end
 
-structure SkewBinaryRAL: RANDOMACCESSLIST =
+structure SegmentedBinary =
+struct
+
+  datatype DigitBlock = ZEROS of int | ONES of int
+  type Nat = DigitBlock list
+
+  fun zeros (i, []) = []
+    | zeros (0, blks) = blks
+    | zeros (i, ZEROS j :: blks) = ZEROS (i+j) :: blks
+    | zeros (i, blks) = ZEROS i :: blks
+
+  fun ones (0, blks) = blks
+    | ones (i, ONES j :: blks) = ONES (i+j) :: blks
+    | ones (i, blks) = ONES i :: blks
+
+  fun inc [] = [ONES 1]
+    | inc (ZEROS i :: blks) = ones(1, zeros(i-1, blks))
+    | inc (ONES i :: blks) = ZEROS i :: inc blks
+
+  fun dec(ONES i :: blks) = zeros (1, ones (i-1, blks))
+    | dec(ZEROS i :: blks) = ONES i :: dec blks
+
+end
+
+(* For incrementing only *)
+structure RedundantSegmentedBinary =
+struct
+
+  datatype Digits = ZERO | ONES of int | TWO
+  type Nat = Digits list
+
+  fun zeros (i, []) = []
+    | zeros (0, blks) = blks
+    | zeros (i, ONES j :: blks) = ONES (i+j) :: blks
+    | zeros (i, blks) = ZERO :: blks
+
+  fun ones (0, ds) = ds
+    | ones (i, ONES j :: ds) = ONES (i+j) :: ds
+    | ones (i, ds) = ONES i :: ds
+
+  fun simpleInc [] = [ONES 1]
+    | simpleInc (ZERO :: ds) = ones (1, ds)
+    | simpleInc (ONES i :: ds) = TWO :: ones (i-1,ds)
+
+  fun fixup (TWO :: ds) = ZERO :: simpleInc ds
+    | fixup (ONES i :: TWO :: ds) = ONES i :: ZERO :: simpleInc ds
+    | fixup ds = ds
+
+  fun inc(ds) = fixup(simpleInc(ds))
+
+end
+
+structure SkewBinaryRAL : RANDOMACCESSLIST =
 struct
 
   exception EMPTY
@@ -356,6 +380,10 @@ struct
   fun update (i, y, []) = raise SUBSCRIPT
     | update (i, y, (w, t) :: ts) = if i < w then (w, updateTree (w, i, y, t)) :: ts
                                              else (w, t) :: update (i - w, y, ts)
+
+   fun fromList(xs:'a list) : 'a RList =
+     foldr cons empty xs
+
 end
 
 functor SkewBinomialHeap (Element: ORD_KEY) =
@@ -437,3 +465,83 @@ end
 
 structure intBinaryHeap = SkewBinomialHeap(struct type ord_key = int
                                                   val compare = Int.compare end)
+
+(*TIME TESTING CODE BELOW*)
+
+(*
+fun randomList (max : int) (n : int) : int list =
+let fun helper (n, s) theList =
+ if n = 0
+    then theList
+    else
+     let val min = 0
+         val max = max
+         val nextInt = Random.randRange(min,max)
+         val randomValue = nextInt s
+      in helper (n - 1, s) (randomValue::theList)
+     end;
+in helper (n, Random.rand(1, 1)) [] end
+
+functor TestRAL(RAL : RANDOMACCESSLIST) =
+struct
+  datatype operation = Insert | Delete
+  type test = (int list) * (operation list)
+
+  fun genOpList n = map (fn x => if x = 0  then Insert else Delete) (randomList 1 n)
+
+  fun runTest (dataGen : int -> int list) (n : int) (t : test) =
+    let
+      fun doTests (r : int RAL.RList) ((ks,os) : test) : unit =
+        case os of
+             [] => ()
+           | Insert::os' => doTests (RAL.cons(hd ks,r)) (tl ks,os')
+           | Delete::os' => doTests (RAL.tail(r)) (ks,os')
+           handle EMPTY => doTests (RAL.cons(hd ks,r)) (tl ks,os')
+
+      val elems = dataGen n
+      val initRAL = RAL.fromList elems
+      val cpuTimer = Timer.startCPUTimer()
+      val _ = doTests initRAL t
+      val {nongc, gc } = Timer.checkCPUTimes cpuTimer
+      val {usr, sys} = nongc
+    in
+      Time.toMicroseconds(usr)
+    end
+end
+
+structure Test1 = TestRAL(BinaryRAL)
+structure Test2 = TestRAL(ZerolessRedundantBinaryRAL)
+structure Test3 = TestRAL(SkewBinaryRAL)
+
+fun downFrom n =
+  case n of
+       0 => [0]
+     | _ => n::(downFrom (n-1))
+
+fun doN (n : int) =
+  let
+    val l = (downFrom 100000)
+    val randomOps = Test3.genOpList 100000
+    val t = Test3.runTest (randomList 999) n (l,randomOps)
+    val _ = print ("Random1, with: " ^ Int.toString n ^ " took: " ^
+    (Int.toString (Int.fromLarge t)) ^ "\n")
+  in
+    t
+  end
+
+fun genN n =
+  [doN n, doN n, doN n, doN n, doN n, doN n, doN n, doN n, doN n, doN n]
+
+val ts = genN 100000
+
+fun average nums =
+    let
+        fun av (s,n,[]) = s/Real.fromInt(n)
+        |   av (s,n,x::xs) = av (s+x,n+1,xs)
+    in
+        av (0.0, 0, nums)
+    end;
+
+val avg = average (map (Real.fromInt o Int.fromLarge) ts)
+
+val _ = print ("average: " ^ (Real.toString avg) ^ "\n") *)
