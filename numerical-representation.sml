@@ -64,6 +64,26 @@ struct
 
 end
 
+structure ZerolessDenseBinary =
+struct
+
+  exception EMPTY
+  exception SUBSCRIPT
+
+  datatype digit = ONE | TWO
+  type nat = digit list (*increasing order of significance*)
+
+  fun inc [] = [ONE]
+    | inc (ONE :: ds) = TWO :: ds
+    | inc (TWO :: ds) = ONE :: inc ds
+
+  fun dec [] = raise EMPTY
+    | dec [ONE] = []
+    | dec (ONE :: ds) = TWO :: dec ds
+    | dec (TWO :: ds) = ONE :: ds
+
+end
+
 structure SPARSEBinary =
 struct
 
